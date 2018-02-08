@@ -1,0 +1,115 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Paul Y. Ke"
+date: "2/5/2018"
+output: html_document
+---
+```{r setup, include=FALSE}
+#Reset the workshop
+rm(list=ls())
+
+#Load required Libraries
+library(knitr)
+library(ggplot2)
+library(datasets)
+library(caret)
+library(randomForest)
+library(foreach)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+
+knitr::opts_chunk$set(echo = TRUE)
+
+#set a randomization seed value for reproducibility
+set.seed(1970)
+```
+##Overview
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+##Data Files, Exploratory Analysis, and Cleanup
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+Looking at the website documentation and the raw data, it is clear that there are many NA/blank values that we'll clean on import.
+
+```{r, echo=FALSE}
+#download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile="pml-training.csv", method="curl")
+#download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile="pml-testing.csv", method="curl")
+
+data_training <- read.csv("pml-training.csv", header=TRUE, sep=",", na.string=c("NA", "#DIV/0!", ""))
+data_testing <- read.csv("pml-testing.csv", header=TRUE, sep=",", na.string=c("NA", "#DIV/0!", ""))
+
+features <- names(data_testing[, colSums(is.na(data_testing))==0])[8:59]
+
+data_training <- data_training[,c(features,"classe")]
+data_testing <- data_testing[,c(features,"problem_id")]
+```
+The training dataset contains 19,622 observations across 160 variables and testing has 20 observations.
+We will need to further clean the data by removing factors within the data sets that have missing values as well as time-series values 
+```{r, echo=FALSE}
+inTrain <- createDataPartition(data_training$classe, p=0.6, list=FALSE)
+training <- data_training[inTrain,]
+sample <- data_training[-inTrain,]
+dim(training)
+dim(sample)
+
+```
+## Analysis and model training
+
+
+### Decision Tree Model
+Following examples from our quizzes, I thought the final 20 question quiz would provide us specific values for parameters and we were supposed to determine which activity 
+(A, B, C, D, or E) correlated based on a decision tree. It wasn't until later that I realized that the testing data provided the 20 samples that the quiz used.  However, it was
+interesting to see how the factors impacted the sepecific activity.
+```{r, echo=TRUE}
+model_rpart <- rpart(classe ~ ., data=training, method = "class", control=rpart.control(method="cv", number=10))
+fancyRpartPlot(model_rpart)
+predict_rpart <- predict(model_rpart, sample, type="class")
+confusionMatrix(predict_rpart, sample$classe)
+```
+
+
+With a 75% accuracy using Decision Tree and RPart, my thought was to investiage with Random Forest and Boosting models to compare and possibly combine them to produce a prediction.  
+### Boosting
+```{r, echo=TRUE}
+model_gbm <- train(classe ~ ., method="gbm", data=training, verbose=FALSE, trControl=trainControl(method="cv", number=10))
+model_gbm
+predict_gbm <- predict(model_gbm, sample)
+confusionMatrix(predict_gbm, sample$classe)
+```
+We also see Accuracy increase as the number of trees increase (50, 100, 150) but at best a 96.11% model accuracy.
+
+### Random Forest
+In the website / documentation, the researches mentioned use of Random Forest so I also modeled with "rf" and the training dataset, 
+the caret package defaults the number of trees to 500 and runs 3 different sizes of variable sampling which causes the program to run for a very long time (at least over an hour before I gave up).
+The caret package function wraps the randomForest function and allows for tuning of 2 parameters: mtry, The number of variables randomly sampled as candidates at each split and ntree, 
+the number of trees to grow.
+Even running across a portion of the dataset, the training time was reduced at the sake of a lower ntree value and at the expense of accuracy.
+```{r, echo=TRUE}
+#model_rf <- train(classe ~ ., data=training, ntree=50, method="rf")
+```
+
+caret is just a convenience wrapper for the "randomForest" method which I called directly and found it to run much faster by adding in the option to run the calculation in parallel, this will allow
+me to establish greater accuracy.
+```{r, echo=TRUE}
+model_rf <- randomForest(classe ~., data=training, method="rf", importance=TRUE, trControl=trainControl(method="cv", allowParallel=TRUE, number=10))
+model_rf
+```
+Prediction using Random Forest model
+```{r, echo=TRUE}
+predict_rf<- predict(model_rf, sample, type="class")
+confusionMatrix(predict_rf, sample$classe )
+```
+
+A 99.27% accuracy model, Random Forest seems the best model to use to predict our testing data records for the 20 question Quiz.
+
+## Testing
+```{r, echo=TRUE}
+predict_quiz <- predict(model_rf, data_testing)
+predict_quiz
+```
+The prediction results were entered into the quiz and received 100% (20/20) match.
